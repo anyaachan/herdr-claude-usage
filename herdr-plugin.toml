@@ -1,0 +1,12 @@
+id = "herdr-claude-usage"
+name = "Claude Usage"
+version = "0.1.0"
+min_herdr_version = "0.8.0"
+description = "Global Claude Code plan usage in one place: a compact tab-bar entry and a pretty popup dashboard with session and weekly bars. Data is pushed by Claude Code's own statusLine hook - no credentials touched."
+platforms = ["macos", "linux"]
+
+[[panes]]
+id = "dashboard"
+title = "Claude usage"
+placement = "overlay"
+command = ["bash", "bin/herdr-claude-usage", "dashboard"]
