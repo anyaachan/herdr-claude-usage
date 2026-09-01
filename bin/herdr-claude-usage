@@ -30,7 +30,20 @@ collect() {
     key=$(printf '%s' "$payload" | jq -r '(.rate_limits.seven_day.resets_at // .rate_limits.five_hour.resets_at // 0) | tostring' 2>/dev/null)
     if [ -n "$key" ] && [ "$key" != "0" ]; then
       mkdir -p "$STATE_DIR/profiles"
-      printf '%s' "$payload" > "$STATE_DIR/profiles/$key.json.tmp.$$" && mv "$STATE_DIR/profiles/$key.json.tmp.$$" "$STATE_DIR/profiles/$key.json"
+      local pfile="$STATE_DIR/profiles/$key.json" stored="$payload"
+      # Claude Code sometimes omits five_hour from a payload. Keep the previous
+      # window for this profile while it has not expired, so the 5h segment
+      # does not flicker away whenever such a session writes last.
+      if [ -s "$pfile" ]; then
+        stored=$(printf '%s' "$payload" | jq --slurpfile old "$pfile" --argjson now "$(date +%s)" '
+          if (.rate_limits.five_hour // null) == null
+             and (($old[0].rate_limits.five_hour // null) != null)
+             and ((($old[0].rate_limits.five_hour.resets_at // 0) | tonumber? // 0) > $now)
+          then .rate_limits.five_hour = $old[0].rate_limits.five_hour
+          else . end' 2>/dev/null) || stored="$payload"
+        [ -n "$stored" ] || stored="$payload"
+      fi
+      printf '%s' "$stored" > "$pfile.tmp.$$" && mv "$pfile.tmp.$$" "$pfile"
       sid=$(printf '%s' "$payload" | jq -r '.session_id // empty' 2>/dev/null)
       if [ -n "$sid" ]; then
         # Unique tmp per process: many sessions' statusLines run this concurrently.
@@ -241,6 +254,8 @@ bar() {
   [ -n "$primary" ] || { printf '✳ Claude —'; exit 0; }
 
   local parts=() key used epoch seg hr
+  # No active 5h window means nothing used in it; say 0% rather than vanish.
+  windows "$primary" | grep -q '^five_hour' || parts+=("5h 0%")
   while IFS=$'\t' read -r key used epoch; do
     seg="$(short_label "$key") $(fmt_pct "$used")"
     if [ "$key" = "five_hour" ] && [ "$epoch" -gt 0 ] 2>/dev/null; then
@@ -312,6 +327,7 @@ draw() {
   else agetxt="updated $((age / 60))m ago"; fi
   nsess=$(printf '%s\n' "$ranked" | awk -F'\t' -v f="$primary" '$1 == f {print $2}')
   printf '\n  %s✳ Claude usage%s   %s%s · %s session(s)%s\n' "$bold" "$rst" "$dim" "$agetxt" "${nsess:-?}" "$rst"
+  windows "$primary" | grep -q '^five_hour' || draw_one five_hour 0 0 "$tz"
   draw_bars "$primary" "$tz"
 
   # Per-model weekly windows only the usage API knows about (e.g. Fable).
