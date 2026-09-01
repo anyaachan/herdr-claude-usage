@@ -199,30 +199,28 @@ api_spend() {
 
 label_for() {
   case "$1" in
-    five_hour) printf 'Current session' ;;
-    seven_day) printf 'Current week (all models)' ;;
-    seven_day_*) local m="${1#seven_day_}"; printf 'Current week (%s)' "$(printf '%s' "${m:0:1}" | tr a-z A-Z)${m:1}" ;;
-    week:*) printf 'Current week (%s)' "${1#week:}" ;;
-    spend:*) printf 'Extra usage (%s)' "${1#spend:}" ;;
+    five_hour) printf 'Session (5h)' ;;
+    seven_day) printf 'Week · all models' ;;
+    seven_day_*) local m="${1#seven_day_}"; printf 'Week · %s' "$(printf '%s' "${m:0:1}" | tr a-z A-Z)${m:1}" ;;
+    week:*) printf 'Week · %s' "${1#week:}" ;;
+    spend) printf 'Extra usage' ;;
     *) printf '%s' "$1" ;;
   esac
 }
 
-reset_text() { # epoch -> "Resets today 2am" / "Resets Wed Sep 3, 6pm"
-  local epoch="$1" now day nowday txt
-  [ "$epoch" -gt 0 ] 2>/dev/null || { printf ''; return; }
-  now=$(date +%s)
-  day=$(efmt "$epoch" +%Y%m%d) || { printf ''; return; }
-  nowday=$(date +%Y%m%d)
-  local hr; hr=$(efmt "$epoch" +%-I%p | tr 'A-Z' 'a-z')
-  if [ "$day" = "$nowday" ]; then
-    txt="today $hr"
-  elif [ "$day" = "$(date -v+1d +%Y%m%d 2>/dev/null || date -d tomorrow +%Y%m%d)" ]; then
-    txt="tomorrow $hr"
+rel_time() { # epoch -> "2h04m" / "45m" / "2d3h"
+  local d=$(( $1 - $(date +%s) )); [ "$d" -lt 0 ] && d=0
+  if [ "$d" -ge 86400 ]; then printf '%dd%dh' $((d / 86400)) $((d % 86400 / 3600))
+  elif [ "$d" -ge 3600 ]; then printf '%dh%02dm' $((d / 3600)) $((d % 3600 / 60))
+  else printf '%dm' $((d / 60)); fi
+}
+
+abs_time() { # epoch -> "3pm" today, "Wed 6pm" otherwise
+  if [ "$(efmt "$1" +%Y%m%d)" = "$(date +%Y%m%d)" ]; then
+    efmt "$1" +%-I%p | tr 'A-Z' 'a-z'
   else
-    txt="$(efmt "$epoch" '+%a %b %-d,') $hr"
+    printf '%s %s' "$(efmt "$1" +%a)" "$(efmt "$1" +%-I%p | tr 'A-Z' 'a-z')"
   fi
-  printf 'Resets %s' "$txt"
 }
 
 short_label() {
@@ -282,30 +280,38 @@ bar() {
 
 # ---------- dashboard: pretty popup ----------
 BAR_W=34
-draw_one() { # key used epoch tz
-  local key="$1" used="$2" epoch="$3" tz="$4"
+LINE_W=39   # bar + space + "100%"
+
+draw_one() { # key used epoch [right-text]
+  local key="$1" used="$2" epoch="$3" right="${4:-}"
   local dim=$'\e[2m' rst=$'\e[0m' bold=$'\e[1m'
-  local label color filled i cells reset
+  local label color filled tick i cells pad
   label=$(label_for "$key")
+  if [ -z "$right" ] && [ "$epoch" -gt 0 ] 2>/dev/null; then
+    right="↻ $(rel_time "$epoch") · $(abs_time "$epoch")"
+  fi
   if [ "$used" -ge "$BAR_HOT" ] 2>/dev/null; then color=$'\e[38;5;210m'
   elif [ "$used" -ge "$BAR_WARN" ] 2>/dev/null; then color=$'\e[38;5;222m'
   else color=$'\e[38;5;147m'; fi
   filled=$(( used * BAR_W / 100 )); [ "$filled" -gt "$BAR_W" ] && filled=$BAR_W
   [ "$used" -gt 0 ] && [ "$filled" -eq 0 ] && filled=1
+  # A faint tick marks where BAR_HOT begins.
+  tick=$(( BAR_W * BAR_HOT / 100 )); [ "$tick" -ge "$BAR_W" ] && tick=$((BAR_W - 1))
   cells=""
   for ((i = 0; i < BAR_W; i++)); do
-    if [ "$i" -lt "$filled" ]; then cells+="█"; else cells+=$'\e[38;5;238m'"░${color}"; fi
+    if [ "$i" -lt "$filled" ]; then cells+="█"
+    elif [ "$i" -eq "$tick" ]; then cells+=$'\e[38;5;243m'"┊${color}"
+    else cells+=$'\e[38;5;238m'"░${color}"; fi
   done
-  printf '\n  %s%s%s\n' "$bold" "$label" "$rst"
-  printf '  %s%s%s  %s%% used\n' "$color" "$cells" "$rst" "$used"
-  reset=$(reset_text "$epoch")
-  [ -n "$reset" ] && printf '  %s%s (%s)%s\n' "$dim" "$reset" "$tz" "$rst"
+  pad=$(( LINE_W - ${#label} - ${#right} )); [ "$pad" -lt 1 ] && pad=1
+  printf '\n  %s%s%s%*s%s%s%s\n' "$bold" "$label" "$rst" "$pad" '' "$dim" "$right" "$rst"
+  printf '  %s%s%s %3d%%\n' "$color" "$cells" "$rst" "$used"
 }
 
-draw_bars() { # payload_file tz
+draw_bars() { # payload_file
   local key used epoch
   while IFS=$'\t' read -r key used epoch; do
-    draw_one "$key" "$used" "$epoch" "$2"
+    draw_one "$key" "$used" "$epoch"
   done < <(windows "$1")
 }
 
@@ -324,31 +330,34 @@ draw() {
   fi
 
   age=$(payload_age "$primary")
-  if [ "$age" -lt 120 ]; then agetxt="updated ${age}s ago"
-  else agetxt="updated $((age / 60))m ago"; fi
+  if [ "$age" -lt 120 ]; then agetxt="${age}s ago"
+  else agetxt="$((age / 60))m ago"; fi
   nsess=$(printf '%s\n' "$ranked" | awk -F'\t' -v f="$primary" '$1 == f {print $2}')
-  printf '\n  %s✳ Claude usage%s   %s%s · %s session(s)%s\n' "$bold" "$rst" "$dim" "$agetxt" "${nsess:-?}" "$rst"
-  windows "$primary" | grep -q '^five_hour' || draw_one five_hour 0 0 "$tz"
-  draw_bars "$primary" "$tz"
+  printf '\n  %s✳ Claude usage%s   %s%s · %s session(s) · %s%s\n' \
+    "$bold" "$rst" "$dim" "$agetxt" "${nsess:-?}" "$tz" "$rst"
+  windows "$primary" | grep -q '^five_hour' || draw_one five_hour 0 0
+  draw_bars "$primary"
 
   # Per-model weekly windows only the usage API knows about (e.g. Fable).
   local key used epoch
   while IFS=$'\t' read -r key used epoch; do
-    [ -n "$key" ] && draw_one "$key" "$used" "$epoch" "$tz"
+    [ -n "$key" ] && draw_one "$key" "$used" "$epoch"
   done < <(api_extra_windows)
 
   # Monthly extra-usage credits.
   local pct spent limit cur
   while IFS=$'\t' read -r pct spent limit cur; do
-    [ -n "$pct" ] && draw_one "spend:${cur}${spent} of ${cur}${limit} this month" "$pct" 0 "$tz"
+    [ -n "$pct" ] && draw_one "spend" "$pct" 0 "${cur}${spent} of ${cur}${limit}"
   done < <(api_spend)
 
   # Other signed-in profiles, compact.
   local file n names5 line
   while IFS=$'\t' read -r file n names5; do
     [ "$file" = "$primary" ] && continue
-    line=$(windows "$file" | awk -F'\t' '$1=="five_hour"{s=$2} $1=="seven_day"{w=$2} END{printf "%s%% session · %s%% week", s, w}')
-    printf '\n  %sOther profile (%s session(s)%s): %s%s\n' "$dim" "$n" "${names5:+ · $names5}" "$line" "$rst"
+    line=$(windows "$file" | awk -F'\t' '
+      $1 == "five_hour" {s = $2} $1 == "seven_day" {w = $2}
+      END {printf "5h %s%% · wk %s%%", (s == "" ? "?" : s), (w == "" ? "?" : w)}')
+    printf '\n  %s◦ %s · other profile (%s session(s)%s)%s\n' "$dim" "$line" "$n" "${names5:+ · $names5}" "$rst"
   done < <(printf '%s\n' "$ranked")
 }
 
@@ -356,7 +365,7 @@ dashboard() {
   while :; do
     printf '\e[H\e[2J'
     draw
-    printf '\n  \e[2mq to close · refreshes every 30s\e[0m\n'
+    printf '\n  \e[2mq close · any key refresh · auto 30s\e[0m\n'
     read -r -s -t 30 -n 1 key 2>/dev/null && case "${key:-}" in q|Q|$'\e') break ;; esac
   done
 }

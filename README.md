@@ -9,7 +9,7 @@ Global Claude Code plan usage inside [Herdr](https://herdr.dev), in one place, n
 ## Features
 
 - **Tab-bar summary**, always visible: session window with its reset hour, week, per-model weekly windows, monthly extra-usage credits. A percentage above 80 gets a `!!` suffix; a trailing `⁺` means another signed-in profile is also active.
-- **Popup dashboard** on a keybinding: severity-colored bars, reset times in your local timezone, extra-usage spend with amounts, active session count, one compact line per other signed-in profile. Refreshes every 30s; `q` closes.
+- **Popup dashboard** on a keybinding: severity-colored bars with a threshold tick, reset countdowns (`↻ 33m · 8pm`), extra-usage spend with amounts, active session count, one compact line per other signed-in profile. Any key refreshes, auto every 30s, `q` closes.
 - **Multi-account aware**: payloads are clustered into per-account profiles; the logged-in account is primary, others stay visible without hijacking the display.
 - **No credentials required** for the core data; an optional macOS-only usage-API fetch adds per-model windows and spend.
 - **Reversible install**: the statusLine wrapper chains to whatever was installed before and restores it on uninstall.
@@ -46,27 +46,26 @@ Run `herdr server reload-config`. Data appears within a minute of any Claude Cod
 The tab bar updates on its own every 30s. `prefix+u` opens the dashboard:
 
 ```text
-  ✳ Claude usage   updated 12s ago · 8 session(s)
+  ✳ Claude usage   12s ago · 8 session(s) · Europe/Prague
 
-  Current session
-  █████████░░░░░░░░░░░░░░░░░░░░░░░░░  29% used
-  Resets today 3pm (Europe/Prague)
+  Session (5h)                ↻ 33m · 8pm
+  ████████████████████████░░░┊░░░░░░  71%
 
-  Current week (all models)
-  ███████░░░░░░░░░░░░░░░░░░░░░░░░░░░  22% used
-  Resets Thu Sep 3, 6pm (Europe/Prague)
+  Week · all models     ↻ 1d22h · Thu 6pm
+  ███████████░░░░░░░░░░░░░░░░┊░░░░░░  33%
 
-  Current week (Fable)
-  ██████░░░░░░░░░░░░░░░░░░░░░░░░░░░░  20% used
-  Resets Thu Sep 3, 6pm (Europe/Prague)
+  Week · Fable          ↻ 1d22h · Thu 6pm
+  ████████████░░░░░░░░░░░░░░░┊░░░░░░  38%
 
-  Extra usage (€260 of €300 this month)
-  █████████████████████████████░░░░░  87% used
+  Extra usage                €260 of €300
+  █████████████████████████████░░░░░  87%
 
-  Other profile (1 session(s) · rover): 4% session · 54% week
+  ◦ 5h 4% · wk 54% · other profile (1 session(s) · rover)
+
+  q close · any key refresh · auto 30s
 ```
 
-Bars are lavender below 50%, amber from 50%, red from 80%.
+Bars are lavender below 50%, amber from 50%, red from 80%; the faint `┊` tick marks where red begins.
 
 ## Configuration
 
