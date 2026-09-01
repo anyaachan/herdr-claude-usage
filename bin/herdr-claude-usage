@@ -12,9 +12,10 @@ STATE_DIR=${HERDR_PLUGIN_STATE_DIR:-$HOME/.local/state/herdr/plugins/herdr-claud
 CONFIG_DIR=${HERDR_PLUGIN_CONFIG_DIR:-$HOME/.config/herdr/plugins/config/herdr-claude-usage}
 PAYLOAD="$STATE_DIR/payload.json"
 CHAIN="$CONFIG_DIR/chain"
-STALE_SECS=1800
+STALE_SECS=${STALE_SECS:-1800}
 
 mkdir -p "$STATE_DIR"
+[ -f "$CONFIG_DIR/config" ] && . "$CONFIG_DIR/config"
 
 # ---------- collect: statusLine hook (invoked by Claude Code, not manually) ----------
 # Usage limits are account-scoped, but different sessions may be signed into
