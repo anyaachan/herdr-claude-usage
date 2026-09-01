@@ -222,10 +222,13 @@ short_label() {
   esac
 }
 
-# Red percentage when the window is nearly exhausted.
+# Percentage color: red when nearly exhausted, yellow when warming up.
 BAR_HOT=${BAR_HOT:-80}
+BAR_WARN=${BAR_WARN:-50}
 fmt_pct() {
-  if [ "$1" -ge "$BAR_HOT" ] 2>/dev/null; then printf '\033[31m%s%%\033[0m' "$1"; else printf '%s%%' "$1"; fi
+  if [ "$1" -ge "$BAR_HOT" ] 2>/dev/null; then printf '\033[31m%s%%\033[0m' "$1"
+  elif [ "$1" -ge "$BAR_WARN" ] 2>/dev/null; then printf '\033[33m%s%%\033[0m' "$1"
+  else printf '%s%%' "$1"; fi
 }
 
 # ---------- bar: one-line summary for the Herdr tab bar ----------
