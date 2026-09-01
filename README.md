@@ -16,7 +16,7 @@ Global Claude Code plan usage inside [Herdr](https://herdr.dev), in one place, n
 
 Two surfaces:
 
-- **Tab bar** (always visible): `✳ 5h 29% ↻2am · wk 18% · Fable 15% · € 87%`. Percentages turn yellow at 50% and red at 80% (`BAR_WARN`/`BAR_HOT` in the plugin config). A trailing `⁺` means another signed-in profile is also active.
+- **Tab bar** (always visible): `✳ 5h 29% ↻2am · wk 18% · Fable 15% · € 87%`. A percentage gets a 🟡 marker at 50% and 🔴 at 80% (`BAR_WARN`/`BAR_HOT` in the plugin config); the tab bar renders no ANSI colors, so markers carry the severity. A trailing `⁺` means another signed-in profile is also active.
 - **Popup dashboard** (on a keybinding): full bars, severity-colored (lavender < 50% < amber < 80% < red), reset times in your local timezone, extra-usage spend (`€260 of €300 this month`), and a compact line per other active profile. Refreshes every 30s; `q` closes.
 
 ## How it gets the data

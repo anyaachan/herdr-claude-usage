@@ -234,12 +234,14 @@ short_label() {
   esac
 }
 
-# Percentage color: red when nearly exhausted, yellow when warming up.
+# Severity marker: red when nearly exhausted, yellow when warming up.
+# The Herdr tab bar renders text without interpreting ANSI escapes, so the
+# color comes from emoji glyphs rather than escape codes.
 BAR_HOT=${BAR_HOT:-80}
 BAR_WARN=${BAR_WARN:-50}
 fmt_pct() {
-  if [ "$1" -ge "$BAR_HOT" ] 2>/dev/null; then printf '\033[31m%s%%\033[0m' "$1"
-  elif [ "$1" -ge "$BAR_WARN" ] 2>/dev/null; then printf '\033[33m%s%%\033[0m' "$1"
+  if [ "$1" -ge "$BAR_HOT" ] 2>/dev/null; then printf '🔴%s%%' "$1"
+  elif [ "$1" -ge "$BAR_WARN" ] 2>/dev/null; then printf '🟡%s%%' "$1"
   else printf '%s%%' "$1"; fi
 }
 
