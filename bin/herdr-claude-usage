@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# herdr-claude-usage — global Claude Code plan usage inside Herdr.
+# herdr-claude-usage: global Claude Code plan usage inside Herdr.
 #
 # Data source: Claude Code invokes the configured statusLine command with a JSON
 # payload on stdin that includes rate_limits (five_hour / seven_day / per-model
@@ -26,7 +26,7 @@ collect() {
   payload=$(cat)
   if [ -n "$payload" ]; then
     printf '%s' "$payload" > "$PAYLOAD.tmp.$$" && mv "$PAYLOAD.tmp.$$" "$PAYLOAD"
-    # Weekly reset is account-scoped and stable for a week — a good profile key.
+    # Weekly reset is account-scoped and stable for a week, so it makes a good profile key.
     key=$(printf '%s' "$payload" | jq -r '(.rate_limits.seven_day.resets_at // .rate_limits.five_hour.resets_at // 0) | tostring' 2>/dev/null)
     if [ -n "$key" ] && [ "$key" != "0" ]; then
       mkdir -p "$STATE_DIR/profiles"
@@ -73,6 +73,9 @@ payload_age() { # [file]
   printf '%s' $(( $(date +%s) - $(stat -f %m "$f" 2>/dev/null || stat -c %Y "$f") ))
 }
 
+# Portable epoch formatter: BSD date -r, GNU date -d @.
+efmt() { date -r "$1" "$2" 2>/dev/null || date -d "@$1" "$2" 2>/dev/null; }
+
 tz_name() {
   local link
   link=$(readlink /etc/localtime 2>/dev/null)
@@ -93,8 +96,7 @@ windows() {
         ((.value.used_percentage // .value.utilization) | round | tostring),
         ((.value.resets_at // 0) as $r |
           (if ($r|type) == "number" then $r
-           else (try ($r | sub("\\.[0-9]+"; "") | sub(":(?=[0-9]{2}$)"; "") |
-                      strptime("%Y-%m-%dT%H:%M:%S%z") | mktime) catch 0)
+           else (try (($r | sub("\\.[0-9]+"; "") | sub("\\+00:00$"; "Z") | fromdateiso8601) + (if ($r | test("\\.[0-9]")) then 1 else 0 end)) catch 0)
            end) | tostring)
       ] | @tsv' "${1:-$PAYLOAD}" 2>/dev/null
 }
@@ -109,21 +111,22 @@ USE_API=${USE_API:-1}
 fetch_api() {
   [ "$USE_API" = "1" ] || return 0
   [ "$(payload_age "$API_CACHE")" -lt 300 ] && return 0
+  [ "$(payload_age "$API_CACHE.failed")" -lt 300 ] && return 0
   command -v security >/dev/null 2>&1 || return 0
-  local tok
+  local tok tmp="$API_CACHE.tmp.$$"
   tok=$(security find-generic-password -s "Claude Code-credentials" -w 2>/dev/null \
     | jq -r '.claudeAiOauth.accessToken // empty' 2>/dev/null)
-  [ -n "$tok" ] || return 0
+  [ -n "$tok" ] || { : > "$API_CACHE.failed"; return 0; }
   if curl -sf -m 4 'https://api.anthropic.com/api/oauth/usage' \
        -H "Authorization: Bearer $tok" \
        -H 'anthropic-beta: oauth-2025-04-20' \
-       -o "$API_CACHE.tmp" 2>/dev/null \
-     && jq -e 'type == "object"' "$API_CACHE.tmp" >/dev/null 2>&1; then
-    mv "$API_CACHE.tmp" "$API_CACHE"
+       -o "$tmp" 2>/dev/null \
+     && jq -e 'type == "object"' "$tmp" >/dev/null 2>&1; then
+    mv "$tmp" "$API_CACHE"
+    rm -f "$API_CACHE.failed"
   else
-    rm -f "$API_CACHE.tmp"
-    # Back off failed attempts for the cache window too.
-    [ -f "$API_CACHE" ] || { : > "$API_CACHE.failed"; }
+    rm -f "$tmp"
+    : > "$API_CACHE.failed"
   fi
 }
 
@@ -137,7 +140,10 @@ primary_file() { # ranked_list -> file
   if [ -n "$api_wk" ] && [ "$api_wk" != "0" ]; then
     while IFS=$'\t' read -r file _n _names; do
       [ -n "$file" ] || continue
-      if [ "$(windows "$file" | awk -F'\t' '$1 == "seven_day" {print $3}')" = "$api_wk" ]; then
+      # +/-2s tolerance: the API carries fractional seconds, the statusLine
+      # payload whole seconds, so exact equality would never match.
+      local wk; wk=$(windows "$file" | awk -F'\t' '$1 == "seven_day" {print $3}')
+      if [ -n "$wk" ] && [ "$wk" -ge $((api_wk - 2)) ] && [ "$wk" -le $((api_wk + 2)) ] 2>/dev/null; then
         printf '%s' "$file"; return
       fi
     done <<< "$ranked"
@@ -158,8 +164,7 @@ api_extra_windows() {
         (.percent | round | tostring),
         ((.resets_at // "") as $r |
           (if ($r|type) == "number" then $r
-           else (try ($r | sub("\\.[0-9]+"; "") | sub(":(?=[0-9]{2}$)"; "") |
-                      strptime("%Y-%m-%dT%H:%M:%S%z") | mktime) catch 0)
+           else (try (($r | sub("\\.[0-9]+"; "") | sub("\\+00:00$"; "Z") | fromdateiso8601) + (if ($r | test("\\.[0-9]")) then 1 else 0 end)) catch 0)
            end) | tostring)
       ] | @tsv' "$API_CACHE" 2>/dev/null
 }
@@ -178,12 +183,6 @@ api_spend() {
       ] | @tsv' "$API_CACHE" 2>/dev/null
 }
 
-gauge() { # pct -> one mini bar glyph
-  local g="▁▂▃▄▅▆▇█" i=$(( $1 * 7 / 100 ))
-  [ "$i" -gt 7 ] && i=7; [ "$i" -lt 0 ] && i=0
-  printf '%s' "${g:$i:1}"
-}
-
 label_for() {
   case "$1" in
     five_hour) printf 'Current session' ;;
@@ -199,15 +198,15 @@ reset_text() { # epoch -> "Resets today 2am" / "Resets Wed Sep 3, 6pm"
   local epoch="$1" now day nowday txt
   [ "$epoch" -gt 0 ] 2>/dev/null || { printf ''; return; }
   now=$(date +%s)
-  day=$(date -r "$epoch" +%Y%m%d 2>/dev/null) || { printf ''; return; }
+  day=$(efmt "$epoch" +%Y%m%d) || { printf ''; return; }
   nowday=$(date +%Y%m%d)
-  local hr; hr=$(date -r "$epoch" +%-I%p | tr 'A-Z' 'a-z')
+  local hr; hr=$(efmt "$epoch" +%-I%p | tr 'A-Z' 'a-z')
   if [ "$day" = "$nowday" ]; then
     txt="today $hr"
   elif [ "$day" = "$(date -v+1d +%Y%m%d 2>/dev/null || date -d tomorrow +%Y%m%d)" ]; then
     txt="tomorrow $hr"
   else
-    txt="$(date -r "$epoch" '+%a %b %-d,') $hr"
+    txt="$(efmt "$epoch" '+%a %b %-d,') $hr"
   fi
   printf 'Resets %s' "$txt"
 }
@@ -245,7 +244,7 @@ bar() {
   while IFS=$'\t' read -r key used epoch; do
     seg="$(short_label "$key") $(fmt_pct "$used")"
     if [ "$key" = "five_hour" ] && [ "$epoch" -gt 0 ] 2>/dev/null; then
-      hr=$(date -r "$epoch" +%-I%p 2>/dev/null | tr 'A-Z' 'a-z')
+      hr=$(efmt "$epoch" +%-I%p | tr 'A-Z' 'a-z')
       [ -n "$hr" ] && seg="$seg ↻$hr"
     fi
     parts+=("$seg")
@@ -272,8 +271,8 @@ draw_one() { # key used epoch tz
   local dim=$'\e[2m' rst=$'\e[0m' bold=$'\e[1m'
   local label color filled i cells reset
   label=$(label_for "$key")
-  if [ "$used" -ge 80 ] 2>/dev/null; then color=$'\e[38;5;210m'
-  elif [ "$used" -ge 50 ] 2>/dev/null; then color=$'\e[38;5;222m'
+  if [ "$used" -ge "$BAR_HOT" ] 2>/dev/null; then color=$'\e[38;5;210m'
+  elif [ "$used" -ge "$BAR_WARN" ] 2>/dev/null; then color=$'\e[38;5;222m'
   else color=$'\e[38;5;147m'; fi
   filled=$(( used * BAR_W / 100 )); [ "$filled" -gt "$BAR_W" ] && filled=$BAR_W
   [ "$used" -gt 0 ] && [ "$filled" -eq 0 ] && filled=1
@@ -296,7 +295,7 @@ draw_bars() { # payload_file tz
 
 draw() {
   local dim=$'\e[2m' rst=$'\e[0m' bold=$'\e[1m'
-  local tz ranked primary nsess names age agetxt
+  local tz ranked primary nsess age agetxt
   tz=$(tz_name)
   fetch_api
   ranked=$(profiles_ranked)
@@ -337,12 +336,10 @@ draw() {
 }
 
 dashboard() {
-  local first=1
   while :; do
     printf '\e[H\e[2J'
     draw
     printf '\n  \e[2mq to close · refreshes every 30s\e[0m\n'
-    [ "$first" = 1 ] && first=0
     read -r -s -t 30 -n 1 key 2>/dev/null && case "${key:-}" in q|Q|$'\e') break ;; esac
   done
 }
