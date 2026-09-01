@@ -222,6 +222,12 @@ short_label() {
   esac
 }
 
+# Red percentage when the window is nearly exhausted.
+BAR_HOT=${BAR_HOT:-80}
+fmt_pct() {
+  if [ "$1" -ge "$BAR_HOT" ] 2>/dev/null; then printf '\033[31m%s%%\033[0m' "$1"; else printf '%s%%' "$1"; fi
+}
+
 # ---------- bar: one-line summary for the Herdr tab bar ----------
 # e.g.  ✳ 5h 24% ↻2am · wk 17% · Fable 13% · € 87%   (⁺ = another signed-in profile active)
 bar() {
@@ -234,7 +240,7 @@ bar() {
 
   local parts=() key used epoch seg hr
   while IFS=$'\t' read -r key used epoch; do
-    seg="$(short_label "$key") ${used}%"
+    seg="$(short_label "$key") $(fmt_pct "$used")"
     if [ "$key" = "five_hour" ] && [ "$epoch" -gt 0 ] 2>/dev/null; then
       hr=$(date -r "$epoch" +%-I%p 2>/dev/null | tr 'A-Z' 'a-z')
       [ -n "$hr" ] && seg="$seg ↻$hr"
@@ -242,11 +248,11 @@ bar() {
     parts+=("$seg")
   done < <(windows "$primary")
   while IFS=$'\t' read -r key used epoch; do
-    [ -n "$key" ] && parts+=("$(short_label "$key") ${used}%")
+    [ -n "$key" ] && parts+=("$(short_label "$key") $(fmt_pct "$used")")
   done < <(api_extra_windows)
   local pct _u _l cur
   while IFS=$'\t' read -r pct _u _l cur; do
-    [ -n "$pct" ] && parts+=("${cur} ${pct}%")
+    [ -n "$pct" ] && parts+=("${cur} $(fmt_pct "$pct")")
   done < <(api_spend)
 
   [ "${#parts[@]}" -gt 0 ] || { printf '✳ Claude —'; exit 0; }
