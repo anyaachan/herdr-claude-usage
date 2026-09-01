@@ -19,11 +19,16 @@ Global Claude Code plan usage inside [Herdr](https://herdr.dev), in one place, n
 Requirements: Herdr 0.8+, `bash`, `jq`, `curl`. macOS or Linux.
 
 ```sh
-herdr plugin install anyaachan/herdr-claude-usage   # or: herdr plugin link /path/to/checkout
-bash bin/herdr-claude-usage configure               # wraps ~/.claude/settings.json statusLine (backup + chain)
+herdr plugin install anyaachan/herdr-claude-usage
+herdr plugin action invoke herdr-claude-usage.configure
 ```
 
-Then in `~/.config/herdr/config.toml`:
+That is the whole setup. `configure` wraps the `statusLine` in `~/.claude/settings.json` (backing it up and chaining to whatever was there), writes the tab-bar entry and the `prefix+u` dashboard keybinding into herdr's `config.toml` (backed up; rolled back automatically if herdr rejects the result), and reloads the server. Data appears within a minute of any Claude Code session running.
+
+Herdr's plugin manifest cannot declare tab-bar entries or keybindings, which is why a configure step exists at all. If you prefer to manage `config.toml` yourself, skip the parts you own; `configure` never touches an existing `tab_bar_right` and prints the entry to add instead.
+
+<details>
+<summary>Manual setup (what configure writes)</summary>
 
 ```toml
 [ui]
@@ -39,7 +44,8 @@ width = 64
 height = 20
 ```
 
-Run `herdr server reload-config`. Data appears within a minute of any Claude Code session running.
+Then `herdr server reload-config`.
+</details>
 
 ## Usage
 
@@ -109,8 +115,8 @@ Two independent data sources:
 ## Uninstall
 
 ```sh
-bash bin/herdr-claude-usage uninstall   # restores the previous statusLine
-herdr plugin unlink herdr-claude-usage
+herdr plugin action invoke herdr-claude-usage.uninstall
+herdr plugin uninstall herdr-claude-usage
 ```
 
-Remove the `tab_bar_right` entry and keybinding from `config.toml`.
+The uninstall action restores the previous statusLine and removes every config.toml line it added (they all carry a `# herdr-claude-usage` marker).

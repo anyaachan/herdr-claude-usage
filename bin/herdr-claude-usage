@@ -8,6 +8,7 @@
 # other consumers (e.g. herdr-agent-quota) keep working untouched.
 set -u
 
+HERDR=${HERDR_BIN_PATH:-herdr}
 STATE_DIR=${HERDR_PLUGIN_STATE_DIR:-$HOME/.local/state/herdr/plugins/herdr-claude-usage}
 CONFIG_DIR=${HERDR_PLUGIN_CONFIG_DIR:-$HOME/.config/herdr/plugins/config/herdr-claude-usage}
 PAYLOAD="$STATE_DIR/payload.json"
@@ -370,6 +371,61 @@ dashboard() {
   done
 }
 
+# Write the tab-bar entry and dashboard keybinding into herdr's config.toml.
+# Every added line carries a "# herdr-claude-usage" marker so uninstall can
+# remove exactly what was added. Rolls back if herdr rejects the result.
+herdr_config() {
+  local cfg="${HERDR_CONFIG_PATH:-$HOME/.config/herdr/config.toml}" me tmp out
+  me="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
+  [ -f "$cfg" ] || : > "$cfg"
+  if grep -q 'herdr-claude-usage' "$cfg"; then
+    echo "herdr config already references herdr-claude-usage; not touching $cfg"
+    return
+  fi
+  cp "$cfg" "$cfg.bak-claude-usage"
+  tmp="$cfg.tmp.$$"
+  local bar_entry="{ type = \"command\", command = \"bash '$me' bar\", interval_seconds = 30, timeout_seconds = 5 }"
+  local bar_line="tab_bar_right = [ $bar_entry ] # herdr-claude-usage"
+  if grep -q '^[[:space:]]*tab_bar_right' "$cfg"; then
+    echo "config already defines tab_bar_right; add this entry to it yourself:"
+    echo "  $bar_entry"
+    cp "$cfg" "$tmp"
+  elif grep -q '^\[ui\][[:space:]]*$' "$cfg"; then
+    awk -v line="$bar_line" '{print} /^\[ui\][[:space:]]*$/ && !done {print line; done=1}' "$cfg" > "$tmp"
+  else
+    { cat "$cfg"; printf '\n[ui] # herdr-claude-usage\n%s\n' "$bar_line"; } > "$tmp"
+  fi
+  {
+    cat "$tmp"
+    printf '\n[[keys.command]] # herdr-claude-usage\n'
+    printf 'key = "prefix+u" # herdr-claude-usage\n'
+    printf 'type = "popup" # herdr-claude-usage\n'
+    printf 'command = "bash '\''%s'\'' dashboard" # herdr-claude-usage\n' "$me"
+    printf 'description = "Claude usage dashboard" # herdr-claude-usage\n'
+    printf 'width = 64 # herdr-claude-usage\n'
+    printf 'height = 20 # herdr-claude-usage\n'
+  } > "$tmp.2" && mv "$tmp.2" "$cfg" && rm -f "$tmp"
+  out=$("$HERDR" server reload-config 2>/dev/null)
+  if [ -z "$out" ]; then
+    echo "herdr config updated (server not running; it loads on next start). Backup: $cfg.bak-claude-usage"
+  elif [ "$(printf '%s' "$out" | jq -r '.result.diagnostics | length' 2>/dev/null)" = "0" ]; then
+    echo "herdr config updated: tab-bar entry + prefix+u dashboard. Backup: $cfg.bak-claude-usage"
+  else
+    cp "$cfg.bak-claude-usage" "$cfg"
+    "$HERDR" server reload-config >/dev/null 2>&1
+    echo "herdr rejected the config change; backup restored. Add the entries manually (see README)."
+  fi
+}
+
+herdr_config_remove() {
+  local cfg="${HERDR_CONFIG_PATH:-$HOME/.config/herdr/config.toml}"
+  if [ -f "$cfg" ] && grep -q '# herdr-claude-usage' "$cfg"; then
+    grep -v '# herdr-claude-usage' "$cfg" > "$cfg.tmp.$$" && mv "$cfg.tmp.$$" "$cfg"
+    "$HERDR" server reload-config >/dev/null 2>&1
+    echo "removed herdr config entries"
+  fi
+}
+
 # ---------- configure: install the statusLine wrapper (idempotent, reversible) ----------
 configure() {
   local settings="$HOME/.claude/settings.json" me
@@ -379,13 +435,14 @@ configure() {
   local current
   current=$(jq -r '.statusLine.command // ""' "$settings" 2>/dev/null)
   case "$current" in
-    *herdr-claude-usage*collect*) echo "already installed"; return ;;
+    *herdr-claude-usage*collect*) echo "statusLine wrapper already installed"; herdr_config; return ;;
   esac
   [ -n "$current" ] && printf '%s' "$current" > "$CHAIN" && echo "chaining to previous statusLine: $current"
   cp "$settings" "$settings.bak-claude-usage"
   jq --arg cmd "'$me' collect" '.statusLine = {type:"command", command:$cmd, refreshInterval:60}' \
     "$settings" > "$settings.tmp" && mv "$settings.tmp" "$settings"
   echo "statusLine wrapper installed (backup: $settings.bak-claude-usage)"
+  herdr_config
 }
 
 uninstall() {
@@ -398,6 +455,7 @@ uninstall() {
     jq 'del(.statusLine)' "$settings" > "$settings.tmp" && mv "$settings.tmp" "$settings"
     echo "removed statusLine"
   fi
+  herdr_config_remove
 }
 
 case "${1:-}" in
