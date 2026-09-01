@@ -234,15 +234,13 @@ short_label() {
   esac
 }
 
-# Severity marker: red when nearly exhausted, yellow when warming up.
-# The Herdr tab bar renders text without interpreting ANSI escapes, so the
-# color comes from emoji glyphs rather than escape codes.
+# Tab-bar severity: "!!" after a percentage above BAR_HOT, nothing otherwise.
+# (The tab bar renders no ANSI colors; BAR_WARN still drives the dashboard's
+# amber bars.)
 BAR_HOT=${BAR_HOT:-80}
 BAR_WARN=${BAR_WARN:-50}
 fmt_pct() {
-  if [ "$1" -ge "$BAR_HOT" ] 2>/dev/null; then printf '🔴%s%%' "$1"
-  elif [ "$1" -ge "$BAR_WARN" ] 2>/dev/null; then printf '🟡%s%%' "$1"
-  else printf '%s%%' "$1"; fi
+  if [ "$1" -gt "$BAR_HOT" ] 2>/dev/null; then printf '%s%%!!' "$1"; else printf '%s%%' "$1"; fi
 }
 
 # ---------- bar: one-line summary for the Herdr tab bar ----------
